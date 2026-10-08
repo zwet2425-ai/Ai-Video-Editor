@@ -24,21 +24,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: build-src/mobile-app/package-lock.json
 
       - name: Extract project ZIP
         run: |
           mkdir -p build-src
           unzip -q ai-video-editor-v0.3-mobile-cloud-build.zip -d build-src
 
-      - name: Check project
+      - name: Check extracted project
         working-directory: build-src/mobile-app
         run: |
-          echo "Project files:"
+          echo "Project:"
           ls -la
-          echo "Android directory:"
-          ls -la android 2>/dev/null || true
 
       - name: Install Node dependencies
         working-directory: build-src/mobile-app
@@ -57,40 +53,42 @@ jobs:
       - name: Set Android minSdk to 24
         working-directory: build-src/mobile-app
         run: |
-          echo "Before:"
-          grep -R "minSdk" android/variables.gradle android/app/build.gradle 2>/dev/null || true
+          echo "Searching Android Gradle files..."
+
+          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
+            xargs -0 sed -i -E \
+            's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g'
+
+          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
+            xargs -0 sed -i -E \
+            's/minSdkVersion[[:space:]]+23/minSdkVersion 24/g'
+
+          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
+            xargs -0 sed -i -E \
+            's/minSdk[[:space:]]+23/minSdk 24/g'
 
           if [ -f android/variables.gradle ]; then
             sed -i -E \
-              's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g' \
-              android/variables.gradle
-
-            sed -i -E \
-              's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g' \
-              android/gradle.properties
+            's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g' \
+            android/variables.gradle
           fi
 
-          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
-            xargs -0 sed -i -E \
-              's/minSdkVersion[[:space:]]+23/minSdkVersion 24/g'
-
-          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
-            xargs -0 sed -i -E \
-              's/minSdk[[:space:]]+23/minSdk 24/g'
-
-          echo "After:"
-          grep -R "minSdk" android/variables.gradle android/app/build.gradle 2>/dev/null || true
+          echo "Current minSdk settings:"
+          grep -R "minSdk" android 2>/dev/null || true
 
       - name: Apply native runtime
         working-directory: build-src/mobile-app
         run: |
           bash scripts/apply-native-runtime.sh
 
-      - name: Verify FFmpegKit dependency
+      - name: Verify Android configuration
         working-directory: build-src/mobile-app
         run: |
-          grep -R "ffmpeg-kit" android/app/build.gradle android 2>/dev/null || true
-          grep -R "minSdk" android/variables.gradle android/app/build.gradle 2>/dev/null || true
+          echo "FFmpegKit:"
+          grep -R "ffmpeg-kit" android 2>/dev/null || true
+
+          echo "minSdk:"
+          grep -R "minSdk" android 2>/dev/null || true
 
       - name: Make Gradle executable
         working-directory: build-src/mobile-app/android
