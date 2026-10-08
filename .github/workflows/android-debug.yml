@@ -80,6 +80,17 @@ jobs:
         working-directory: build-src/mobile-app
         run: |
           bash scripts/apply-native-runtime.sh
+          
+- name: Fix Capacitor PluginMethod import
+  working-directory: build-src/mobile-app
+  run: |
+    find android -type f -name "AIVideoRuntimePlugin.java" -exec sed -i 's/import com\.getcapacitor\.annotation\.PluginMethod;/import com.getcapacitor.PluginMethod;/g' {} +
+
+
+
+
+
+          
 
       - name: Verify Android configuration
         working-directory: build-src/mobile-app
