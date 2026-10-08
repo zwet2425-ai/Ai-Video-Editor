@@ -44,7 +44,7 @@ jobs:
           rm -rf build-src
           mkdir -p build-src
 
-          unzip -q ai-video-editor-v0.3-mobile-cloud-build.zip -d build-src
+          unzip -q ai-video-editor-v0.3-fixed-source.zip -d build-src
 
           echo "Extracted files:"
           find build-src -maxdepth 2 -type d | sort
