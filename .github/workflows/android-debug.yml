@@ -40,6 +40,12 @@ jobs:
             npx cap sync android
           fi
 
+      - name: Set Android minSdk to 24
+        working-directory: build-src/mobile-app
+        run: |
+          find android -type f -name "*.gradle" -print0 | xargs -0 sed -i 's/minSdkVersion 23/minSdkVersion 24/g'
+          find android -type f -name "*.gradle" -print0 | xargs -0 sed -i 's/minSdk 23/minSdk 24/g'
+
       - name: Apply native runtime
         working-directory: build-src/mobile-app
         run: bash scripts/apply-native-runtime.sh
