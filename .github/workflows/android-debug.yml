@@ -11,111 +11,298 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Java
+      # --------------------------------------------------
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
+      # --------------------------------------------------
+      # 3. Node
+      # --------------------------------------------------
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      # --------------------------------------------------
+      # 4. Extract mobile project
+      # --------------------------------------------------
       - name: Extract project ZIP
         run: |
+          set -e
+
+          rm -rf build-src
           mkdir -p build-src
+
           unzip -q ai-video-editor-v0.3-mobile-cloud-build.zip -d build-src
 
+          echo "Extracted files:"
+          find build-src -maxdepth 2 -type d | sort
+
+      # --------------------------------------------------
+      # 5. Check project
+      # --------------------------------------------------
       - name: Check extracted project
         working-directory: build-src/mobile-app
         run: |
-          echo "Project:"
+          set -e
+
+          echo "Project directory:"
+          pwd
+
+          echo "Project files:"
           ls -la
 
+      # --------------------------------------------------
+      # 6. Install dependencies
+      # --------------------------------------------------
       - name: Install Node dependencies
         working-directory: build-src/mobile-app
         run: |
+          set -e
           npm install
 
+      # --------------------------------------------------
+      # 7. Prepare Capacitor Android
+      # --------------------------------------------------
       - name: Prepare Android project
         working-directory: build-src/mobile-app
         run: |
+          set -e
+
           if [ ! -d android ]; then
+            echo "Android project does not exist. Creating it..."
             npx cap add android
           else
+            echo "Android project already exists. Syncing..."
             npx cap sync android
           fi
 
+      # --------------------------------------------------
+      # 8. Set minSdk
+      # --------------------------------------------------
       - name: Set Android minSdk to 24
         working-directory: build-src/mobile-app
         run: |
-          echo "Searching Android Gradle files..."
+          set -e
 
-          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
-          xargs -0 sed -i -E \
-          's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g'
+          echo "Updating minSdk values..."
 
-          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
-          xargs -0 sed -i -E \
-          's/minSdkVersion[[:space:]]+23/minSdkVersion 24/g'
+          find android -type f \( \
+            -name "*.gradle" \
+            -o -name "*.gradle.kts" \
+          \) -print0 | while IFS= read -r -d '' file; do
 
-          find android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | \
-          xargs -0 sed -i -E \
-          's/minSdk[[:space:]]+23/minSdk 24/g'
+            sed -i -E \
+              's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g' \
+              "$file" || true
+
+            sed -i -E \
+              's/minSdkVersion[[:space:]]+23/minSdkVersion 24/g' \
+              "$file" || true
+
+            sed -i -E \
+              's/minSdk[[:space:]]+23/minSdk 24/g' \
+              "$file" || true
+
+          done
 
           if [ -f android/variables.gradle ]; then
             sed -i -E \
-            's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g' \
-            android/variables.gradle
+              's/minSdkVersion[[:space:]]*=[[:space:]]*23/minSdkVersion = 24/g' \
+              android/variables.gradle || true
           fi
 
-          echo "Current minSdk settings:"
+          echo "Current minSdk values:"
           grep -R "minSdk" android 2>/dev/null || true
 
+      # --------------------------------------------------
+      # 9. Apply native runtime
+      # --------------------------------------------------
       - name: Apply native runtime
         working-directory: build-src/mobile-app
         run: |
+          set -e
+
           bash scripts/apply-native-runtime.sh
 
+      # --------------------------------------------------
+      # 10. Fix Capacitor PluginMethod
+      # --------------------------------------------------
       - name: Fix Capacitor PluginMethod import
         working-directory: build-src/mobile-app
         run: |
+          set -e
+
           echo "Searching for AIVideoRuntimePlugin.java..."
 
-          find android -type f -name "AIVideoRuntimePlugin.java" -print
+          find android \
+            -type f \
+            -name "AIVideoRuntimePlugin.java" \
+            -print
 
-          find android -type f -name "AIVideoRuntimePlugin.java" -exec \
-          sed -i 's/import com\.getcapacitor\.annotation\.PluginMethod;/import com.getcapacitor.PluginMethod;/g' {} +
+          find android \
+            -type f \
+            -name "AIVideoRuntimePlugin.java" \
+            -exec sed -i \
+            's/import com\.getcapacitor\.annotation\.PluginMethod;/import com.getcapacitor.PluginMethod;/g' \
+            {} +
 
-          echo "Checking PluginMethod import after fix:"
+          echo "PluginMethod imports after fix:"
           grep -R "PluginMethod" android 2>/dev/null || true
 
+      # --------------------------------------------------
+      # 11. Fix publishOutput checked exception
+      # --------------------------------------------------
+      - name: Fix publishOutput exception
+        working-directory: build-src/mobile-app
+        run: |
+          set -e
+
+          FILE="android/app/src/main/java/com/aivideoeditor/v03/runtime/AIVideoRuntimePlugin.java"
+
+          echo "Checking Java file:"
+          echo "$FILE"
+
+          if [ ! -f "$FILE" ]; then
+            echo "ERROR: AIVideoRuntimePlugin.java was not found."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          file = Path(
+              "android/app/src/main/java/com/aivideoeditor/v03/runtime/AIVideoRuntimePlugin.java"
+          )
+
+          text = file.read_text()
+
+          old = "Uri outUri = publishOutput(output);"
+
+          new = """Uri outUri;
+          try {
+              outUri = publishOutput(output);
+          } catch (Exception e) {
+              throw new RuntimeException(e);
+          }"""
+
+          if old in text:
+              text = text.replace(old, new, 1)
+              file.write_text(text)
+              print("FIXED: publishOutput checked exception")
+          else:
+              print("INFO: publishOutput line was not found.")
+              print("It may already be fixed.")
+          PY
+
+          echo "Checking publishOutput code:"
+          grep -n -A8 -B5 "publishOutput" "$FILE" || true
+
+      # --------------------------------------------------
+      # 12. Verify native Java source
+      # --------------------------------------------------
+      - name: Verify native runtime source
+        working-directory: build-src/mobile-app
+        run: |
+          set -e
+
+          FILE="android/app/src/main/java/com/aivideoeditor/v03/runtime/AIVideoRuntimePlugin.java"
+
+          echo "======================================"
+          echo "AIVideoRuntimePlugin.java"
+          echo "======================================"
+
+          sed -n '1,140p' "$FILE"
+
+          echo "======================================"
+          echo "PluginMethod import"
+          echo "======================================"
+
+          grep -n \
+            "import com.getcapacitor.*PluginMethod" \
+            "$FILE" || true
+
+          echo "======================================"
+          echo "publishOutput"
+          echo "======================================"
+
+          grep -n -A8 -B5 \
+            "publishOutput" \
+            "$FILE" || true
+
+      # --------------------------------------------------
+      # 13. Verify Android configuration
+      # --------------------------------------------------
       - name: Verify Android configuration
         working-directory: build-src/mobile-app
         run: |
-          echo "FFmpegKit:"
+          echo "======================================"
+          echo "FFmpegKit"
+          echo "======================================"
+
           grep -R "ffmpeg-kit" android 2>/dev/null || true
 
-          echo "minSdk:"
+          echo "======================================"
+          echo "minSdk"
+          echo "======================================"
+
           grep -R "minSdk" android 2>/dev/null || true
 
-          echo "PluginMethod:"
-          grep -R "import com.getcapacitor.PluginMethod" android 2>/dev/null || true
-
+      # --------------------------------------------------
+      # 14. Make Gradle executable
+      # --------------------------------------------------
       - name: Make Gradle executable
         working-directory: build-src/mobile-app/android
         run: |
           chmod +x gradlew
 
+      # --------------------------------------------------
+      # 15. Clean previous build
+      # --------------------------------------------------
+      - name: Clean Android build
+        working-directory: build-src/mobile-app/android
+        run: |
+          ./gradlew clean
+
+      # --------------------------------------------------
+      # 16. Build Debug APK
+      # --------------------------------------------------
       - name: Build Debug APK
         working-directory: build-src/mobile-app/android
         run: |
           ./gradlew :app:assembleDebug --stacktrace
 
+      # --------------------------------------------------
+      # 17. Check APK
+      # --------------------------------------------------
+      - name: Check APK output
+        run: |
+          set -e
+
+          APK="build-src/mobile-app/android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not created."
+            exit 1
+          fi
+
+          echo "APK successfully created:"
+          ls -lh "$APK"
+
+      # --------------------------------------------------
+      # 18. Upload APK
+      # --------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
